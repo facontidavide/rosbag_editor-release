@@ -2,12 +2,14 @@ cmake_minimum_required(VERSION 2.8.3)
 project(rosbag_editor)
 
 
-add_compile_options(-std=c++11)
+add_compile_options(-std=c++14)
 
 find_package(catkin REQUIRED COMPONENTS
   rosbag
   rosbag_storage
   roscpp
+  tf2_msgs
+  tf
 )
 
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
@@ -20,7 +22,7 @@ find_package(Qt5 REQUIRED COMPONENTS Core Widgets)
 catkin_package(
 #  INCLUDE_DIRS include
 #  LIBRARIES rosbag_editor
-  CATKIN_DEPENDS rosbag rosbag_storage roscpp
+  CATKIN_DEPENDS rosbag rosbag_storage roscpp tf2_msgs tf
 #  DEPENDS system_lib
 )
 
@@ -45,6 +47,8 @@ add_executable(rosbag_editor
     src/main.cpp
     src/rosbag_editor.cpp
     src/rosbag_editor.ui
+    src/filter_frames.cpp
+    src/filter_frames.ui
     desktop/resources.qrc
     )
 
