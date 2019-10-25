@@ -2,6 +2,8 @@
 #include "ui_rosbag_editor.h"
 
 #include <topic_tools/shape_shifter.h>
+#include <tf/tfMessage.h>
+#include <tf2_msgs/TFMessage.h>
 
 #include <QDir>
 #include <QString>
@@ -16,28 +18,31 @@
 #include <QListWidget>
 #include <QStatusBar>
 #include <QFileInfo>
+#include <QLineEdit>
+#include <QCheckBox>
 #include <QProgressDialog>
+#include "filter_frames.h"
 
 RosbagEditor::RosbagEditor(QWidget *parent) :
     QMainWindow(parent),
     ui(new Ui::RosbagEditor)
 {
     QApplication::setWindowIcon(QIcon("://rosbag_editor.png"));
-    QSettings settings;
+    ui->setupUi(this);
 
-    restoreGeometry(settings.value("RosbagEditor/geometry").toByteArray());
-    restoreState(settings.value("RosbagEditor/windowState").toByteArray());
-
+    QSettings settings("DavideFaconti", "rosbag_editor");
     _previous_load_path = settings.value("RosbagEditor/prevLoadPath", QDir::currentPath()).toString();
     _previous_save_path = settings.value("RosbagEditor/prevSavePath", _previous_load_path).toString();
 
-    ui->setupUi(this);
     ui->radioNoCompression->setChecked(true);
+
+    restoreGeometry(settings.value("RosbagEditor/geometry").toByteArray());
+    restoreState(settings.value("RosbagEditor/windowState").toByteArray());
 }
 
 void RosbagEditor::closeEvent(QCloseEvent *event)
 {
-    QSettings settings;
+    QSettings settings("DavideFaconti", "rosbag_editor");
     settings.setValue("RosbagEditor/geometry", saveGeometry());
     settings.setValue("RosbagEditor/windowState", saveState());
     QMainWindow::closeEvent(event);
@@ -60,7 +65,7 @@ void RosbagEditor::on_pushButtonLoad_pressed()
 
     try{
         ui->tableWidgetInput->setRowCount(0);
-        ui->listWidgetOutput->clear();
+        ui->tableWidgetOutput->setRowCount(0);
         _bag.close();
         _bag.open( filename.toStdString() );
     }
@@ -114,6 +119,20 @@ void RosbagEditor::on_pushButtonLoad_pressed()
         ui->tableWidgetInput->setItem(row, 1, type_item);
         row++;
     }
+    changeEnabledWidgets();
+}
+
+void RosbagEditor::changeEnabledWidgets()
+{
+  ui->pushButtonMove->setEnabled( ui->tableWidgetInput->selectionModel()->selectedRows().count() > 0 );
+  bool output = (ui->tableWidgetInput->rowCount() > 0);
+  ui->tableWidgetOutput->setEnabled( output );
+  ui->dateTimeOutputBegin->setEnabled( output );
+  ui->dateTimeOutputEnd->setEnabled( output );
+  ui->pushButtonSave->setEnabled( output );
+
+  bool contains_tf = !ui->tableWidgetInput->findItems( "/tf", Qt::MatchExactly ).empty();
+  ui->pushButtonFilterTF->setEnabled( ui->checkBoxFilterTF->isChecked() && contains_tf );
 }
 
 void RosbagEditor::on_pushButtonMove_pressed()
@@ -130,28 +149,29 @@ void RosbagEditor::on_pushButtonMove_pressed()
         QTableWidgetItem* item = ui->tableWidgetInput->item( index.row(), 0);
         QString topic_name = item->text();
 
-        if( ui->listWidgetOutput->findItems( topic_name, Qt::MatchExactly ).isEmpty() )
+        if( ui->tableWidgetOutput->findItems( topic_name, Qt::MatchExactly ).isEmpty() )
         {
-            ui->listWidgetOutput->addItem(topic_name);
+          int row = ui->tableWidgetOutput->rowCount();
+          ui->tableWidgetOutput->setRowCount(row+1);
+          ui->tableWidgetOutput->setItem(row, 0, new QTableWidgetItem(topic_name) );
+          QLineEdit* topic_editor = new QLineEdit(ui->tableWidgetOutput);
+          ui->tableWidgetOutput->setCellWidget(row, 1, topic_editor);
         }
     }
 
-    QModelIndexList selected_output = ui->listWidgetOutput->selectionModel()->selectedRows();
-    ui->pushButtonMove->setEnabled( false );
+    ui->tableWidgetInput->selectionModel()->clearSelection();
 
-    ui->listWidgetOutput->setEnabled( true );
-    ui->pushButtonSave->setEnabled( ui->listWidgetOutput->count() );
+    ui->pushButtonSave->setEnabled( ui->tableWidgetOutput->rowCount() );
 
-    ui->dateTimeOutputBegin->setEnabled( true );
     ui->dateTimeOutputBegin->setDateTimeRange(ui->dateTimeInputBegin->dateTime(),
                                               ui->dateTimeInputEnd->dateTime() );
     ui->dateTimeOutputBegin->setDateTime(ui->dateTimeInputBegin->dateTime());
 
-    ui->dateTimeOutputEnd->setEnabled( true );
     ui->dateTimeOutputEnd->setDateTimeRange(ui->dateTimeInputBegin->dateTime(),
                                             ui->dateTimeInputEnd->dateTime() );
     ui->dateTimeOutputEnd->setDateTime(ui->dateTimeInputEnd->dateTime());
 
+    changeEnabledWidgets();
 }
 
 void RosbagEditor::on_tableWidgetInput_itemSelectionChanged()
@@ -160,22 +180,23 @@ void RosbagEditor::on_tableWidgetInput_itemSelectionChanged()
     ui->pushButtonMove->setEnabled( select->hasSelection() );
 }
 
-void RosbagEditor::on_listWidgetOutput_itemSelectionChanged()
+void RosbagEditor::on_tableWidgetOutput_itemSelectionChanged()
 {
-    QItemSelectionModel *select = ui->listWidgetOutput->selectionModel();
+    QItemSelectionModel *select = ui->tableWidgetOutput->selectionModel();
     ui->pushButtonRemove->setEnabled( select->hasSelection() );
 }
 
 void RosbagEditor::on_pushButtonRemove_pressed()
 {
     QModelIndexList indexes;
-    while((indexes = ui->listWidgetOutput->selectionModel()->selectedIndexes()).size())
+    while((indexes = ui->tableWidgetOutput->selectionModel()->selectedIndexes()).size())
     {
-        ui->listWidgetOutput->model()->removeRow(indexes.first().row());
+        ui->tableWidgetOutput->model()->removeRow(indexes.first().row());
     }
 
-    ui->pushButtonSave->setEnabled( ui->listWidgetOutput->count() );
-    ui->listWidgetOutput->sortItems();
+    ui->tableWidgetOutput->sortItems(0);
+
+    changeEnabledWidgets();
 }
 
 void RosbagEditor::on_pushButtonSave_pressed()
@@ -217,19 +238,29 @@ void RosbagEditor::on_pushButtonSave_pressed()
       out_bag.setCompression( rosbag::CompressionType::BZ2 );
     }
 
-    std::vector<std::string> topics;
+    std::vector<std::string> input_topics;
+    std::map<std::string,std::string> topis_renamed;
 
-    for(int i = 0; i < ui->listWidgetOutput->count(); ++i)
+    for(int row = 0; row < ui->tableWidgetOutput->rowCount(); ++row)
     {
-        QListWidgetItem* item = ui->listWidgetOutput->item(i);
-        topics.push_back( item->text().toStdString() );
+        std::string name =  ui->tableWidgetOutput->item(row,0)->text().toStdString();
+        QLineEdit* line_edit = qobject_cast<QLineEdit*>(ui->tableWidgetOutput->cellWidget(row, 1));
+        std::string renamed = line_edit->text().toStdString();
+        input_topics.push_back( name );
+        if( renamed.empty())
+        {
+          topis_renamed.insert( std::make_pair(name,name));
+        }
+        else{
+          topis_renamed.insert( std::make_pair(name,renamed));
+        }
     }
 
     double begin_time = std::floor(-0.001 + 0.001*static_cast<double>(ui->dateTimeOutputBegin->dateTime().toMSecsSinceEpoch()));
     double end_time   = std::ceil(  0.001 +  0.001*static_cast<double>(ui->dateTimeOutputEnd->dateTime().toMSecsSinceEpoch()));
 
 
-    rosbag::View bag_view( _bag, rosbag::TopicQuery(topics),
+    rosbag::View bag_view( _bag, rosbag::TopicQuery(input_topics),
                           ros::Time( begin_time ), ros::Time( end_time ) );
 
     QProgressDialog progress_dialog;
@@ -240,6 +271,8 @@ void RosbagEditor::on_pushButtonSave_pressed()
     int msg_count = 0;
     progress_dialog.setRange(0, bag_view.size()-1);
 
+    bool do_tf_filtering = _filtered_frames.size() > 0 && ui->checkBoxFilterTF->isChecked();
+
     for(const rosbag::MessageInstance& msg: bag_view)
     {
       if( msg_count++ %100 == 0)
@@ -248,7 +281,42 @@ void RosbagEditor::on_pushButtonSave_pressed()
         QApplication::processEvents();
       }
 
-      out_bag.write( msg.getTopic(), msg.getTime(), msg, msg.getConnectionHeader());
+      const auto& name = topis_renamed.find(msg.getTopic())->second;
+
+      auto removeTransform = [&](auto tf)
+      {
+        for (int i=0; i < tf->transforms.size(); i++)
+        {
+          auto frame = std::make_pair(tf->transforms[i].header.frame_id,
+                                      tf->transforms[i].child_frame_id);
+          if( _filtered_frames.count(frame) )
+          {
+            tf->transforms.erase( tf->transforms.begin() + i );
+            i--;
+          }
+        }
+      };
+
+
+      if( msg.getTopic() == "/tf" && do_tf_filtering )
+      {
+        tf::tfMessage::Ptr tf = msg.instantiate<tf::tfMessage>();
+        if (tf)
+        {
+          removeTransform(tf);
+          out_bag.write( name, msg.getTime(), tf, msg.getConnectionHeader());
+        }
+
+        tf2_msgs::TFMessage::Ptr tf2 = msg.instantiate<tf2_msgs::TFMessage>();
+        if (tf2)
+        {
+          removeTransform(tf2);
+          out_bag.write( name, msg.getTime(), tf2, msg.getConnectionHeader());
+        }
+      }
+      else{
+        out_bag.write( name, msg.getTime(), msg, msg.getConnectionHeader());
+      }
     }
     out_bag.close();
 
@@ -274,4 +342,17 @@ void RosbagEditor::on_dateTimeOutputBegin_dateTimeChanged(const QDateTime &dateT
     {
         ui->dateTimeOutputEnd->setDateTime( dateTime );
     }
+}
+
+void RosbagEditor::on_checkBoxFilterTF_toggled(bool checked)
+{
+  bool contains_tf = !ui->tableWidgetInput->findItems( "/tf", Qt::MatchExactly ).empty();
+  ui->pushButtonFilterTF->setEnabled( checked && contains_tf );
+}
+
+void RosbagEditor::on_pushButtonFilterTF_pressed()
+{
+  FilterFrames dialog(_bag, _filtered_frames, this);
+  dialog.exec();
+
 }

@@ -7,6 +7,7 @@
 
 #include <rosbag/bag.h>
 #include <rosbag/view.h>
+#include <QSettings>
 
 namespace Ui {
 class RosbagEditor;
@@ -22,13 +23,14 @@ public:
 
 private slots:
     void closeEvent(QCloseEvent *event);
+
     void on_pushButtonLoad_pressed();
 
     void on_pushButtonMove_pressed();
 
     void on_tableWidgetInput_itemSelectionChanged();
 
-    void on_listWidgetOutput_itemSelectionChanged();
+    void on_tableWidgetOutput_itemSelectionChanged();
 
     void on_pushButtonRemove_pressed();
 
@@ -38,12 +40,18 @@ private slots:
 
     void on_dateTimeOutputBegin_dateTimeChanged(const QDateTime &dateTime);
 
-private:
+    void on_checkBoxFilterTF_toggled(bool checked);
+
+    void on_pushButtonFilterTF_pressed();
+
+   private:
     Ui::RosbagEditor *ui;
     QString _loade_filename;
     QString _previous_load_path;
     QString _previous_save_path;
     rosbag::Bag _bag;
+    std::set<std::pair<std::string,std::string>> _filtered_frames;
+    void changeEnabledWidgets();
 };
 
 #endif // ROSBAG_EDITOR_H
