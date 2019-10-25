@@ -1,0 +1,12 @@
+Source: ros-melodic-rosbag-editor
+Section: misc
+Priority: optional
+Maintainer: dfaconti <davide.faconti@gmail.com>
+Build-Depends: debhelper (>= 9.0.0), qtbase5-dev, ros-melodic-catkin, ros-melodic-rosbag, ros-melodic-rosbag-storage, ros-melodic-roscpp, ros-melodic-tf, ros-melodic-tf2-msgs
+Homepage: http://wiki.ros.org/rosbag_editor
+Standards-Version: 3.9.2
+
+Package: ros-melodic-rosbag-editor
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, qtbase5-dev, ros-melodic-rosbag, ros-melodic-rosbag-storage, ros-melodic-roscpp, ros-melodic-tf, ros-melodic-tf2-msgs
+Description: The rosbag_editor package
